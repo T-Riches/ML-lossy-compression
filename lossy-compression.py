@@ -25,27 +25,32 @@ trainy = torch.from_numpy(trainy).to(torch.float)
 testX = torch.from_numpy(testX).to(torch.float)
 testy = torch.from_numpy(testy).to(torch.float)
 
+numFilters1 = 3;
+numFilters2 = 16
+numFilters3 = 32
+numFilters4 = 64
+
+
 # <<< MODEL DEVELOPMENT >>>
 class Autoencoder(nn.Module):
     def __init__(self):
         super(Autoencoder, self).__init__()
         # Encoder!
         self.encoder = nn.Sequential(
-            nn.Linear(101250, 512),
+            nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),  # (batch_size, 16, 75, 113)
             nn.ReLU(True),
-            nn.Linear(512, 128),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # (batch_size, 32, 38, 57)
             nn.ReLU(True),
-            nn.Linear(128, 32),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # (batch_size, 64, 19, 29)
             nn.ReLU(True)
         )
-
-        # Decoder!
+        # Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(32, 128),
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),  # (batch_size, 32, 38, 57)
             nn.ReLU(True),
-            nn.Linear(128, 512),
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1),  # (batch_size, 16, 75, 113)
             nn.ReLU(True),
-            nn.Linear(512, 101250),
+            nn.ConvTranspose2d(16, 3, kernel_size=3, stride=2, padding=1, output_padding=1),  # (batch_size, 3, 150, 225)
             nn.Sigmoid()  # Use Sigmoid to ensure the output is between 0 and 1
         )
 
