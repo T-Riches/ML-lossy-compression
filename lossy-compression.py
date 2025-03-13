@@ -10,59 +10,90 @@ import torch.nn.functional as F  # for activation functions
 import torch.optim as optim  # for optimization algorithms
 
 # <<< DATA LOADING & FEATURE ENGINEERING >>>
-images = np.load("features.npy")  # load the features from a numpy file
+images = np.load("subset_1.npy")  # load the features from a numpy file
 images = images / 255  # normalize the pixel values to be between 0 and 1
-labels = np.load("labels.npy")  # load the labels from a numpy file
-labels = OneHotEncoder(sparse_output=False).fit_transform(labels.reshape(-1, 1))  # one-hot encode the labels
-train_X, test_X, train_y, test_y = train_test_split(images, labels, test_size=0.30)  # split the data into training and testing sets
-train_X = torch.from_numpy(train_X).to(torch.float)  # convert training features to a PyTorch tensor
-train_y = torch.from_numpy(train_y).to(torch.float)  # convert training labels to a PyTorch tensor
-test_X = torch.from_numpy(test_X).to(torch.float)  # convert testing features to a PyTorch tensor
-test_y = torch.from_numpy(test_y).to(torch.float)  # convert testing labels to a PyTorch tensor
+
+# assuming all images in subset_1.npy belong to class 0
+labels = np.zeros((images.shape[0], 1))  # create an array of zeros with the same number of rows as images
+
+# split the data into training and testing sets
+trainX, testX, trainy, testy = train_test_split(images, labels, test_size=0.30)
+
+# convert the data to PyTorch tensors
+trainX = torch.from_numpy(trainX).to(torch.float)
+trainy = torch.from_numpy(trainy).to(torch.float)
+testX = torch.from_numpy(testX).to(torch.float)
+testy = torch.from_numpy(testy).to(torch.float)
 
 # <<< MODEL DEVELOPMENT >>>
-class Net(nn.Module):  # define a neural network class that inherits from nn.Module
-    def __init__(self):  # initialize the network
-        super().__init__()  # call the parent class's initializer
-        self.hidden_layers = [  # define the hidden layers
-            nn.Linear(101250, 200),  # first hidden layer with 101250 input features and 200 output features
-            nn.Linear(200, 10)  # second hidden layer with 200 input features and 10 output features
-        ]
-        self.output_layer = nn.Linear(10, 4)  # define the output layer with 10 input features and 4 output features
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super(Autoencoder, self).__init__()
+        # Encoder!
+        self.encoder = nn.Sequential(
+            nn.Linear(101250, 512),
+            nn.ReLU(True),
+            nn.Linear(512, 128),
+            nn.ReLU(True),
+            nn.Linear(128, 32),
+            nn.ReLU(True)
+        )
 
-    def forward(self, x):  # define the forward pass
-        for layer in self.hidden_layers:  # iterate over the hidden layers
-            x = F.relu(layer(x))  # apply ReLU activation function to each hidden layer
-        return F.softmax(F.sigmoid(self.output_layer(x)))  # apply sigmoid to the output layer and then softmax
+        # Decoder!
+        self.decoder = nn.Sequential(
+            nn.Linear(32, 128),
+            nn.ReLU(True),
+            nn.Linear(128, 512),
+            nn.ReLU(True),
+            nn.Linear(512, 101250),
+            nn.Sigmoid()  # Use Sigmoid to ensure the output is between 0 and 1
+        )
 
-my_network = Net()  # create an instance of the network
-criterion = nn.BCELoss()  # define the loss function as binary cross-entropy loss
-optimizer = optim.Adam(my_network.parameters(), learning_rate=0.01)  # define the optimizer as Adam with a learning rate of 0.01
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+autoencoder = Autoencoder()  # instance of autoencoder
+
+error = nn.MSELoss()  # loss function
+optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # Adam optimizer
+
+numberEpochs = 20  # number of times entire dataset is passed through the NN
+batchSize = 50  # batch size is the number of training samples that are fed to the neural network at once.
+
+for epoch in range(numberEpochs):
+    loss = 0.0
+    for num in range(0, trainX.shape[0], batchSize):
+        inputs = trainX[num:num+batchSize]  # selects batch of data from trainX at num and ending at batch size
+        optimiser.zero_grad()  # reset the gradients
+        outputs = autoencoder(inputs)  # perform a forward pass
+        trainLoss = error(outputs, inputs)  # compute the loss
+        trainLoss.backward()  # perform backpropagation
+        optimiser.step()  # update the model parameters
+        loss += trainLoss.item()  # accumulate the loss
+    print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {loss:.4f}")  # reminder for python: f"My name is {variable} and i am {variable2} years old"
+
 
 # <<< MODEL EVALUATION >>>
-batch_size = 50  # set the batch size
-for epoch in range(5):  # train for 5 epochs
-    loss = 0.0  # initialize the loss for the epoch
-    for idx in range(0, train_X.shape[0], batch_size):  # iterate over the training data in batches
-        optimizer.zero_grad()  # reset the gradients
-        outputs = my_network(train_X[idx:idx+batch_size])  # perform a forward pass
-        new_loss = criterion(outputs, train_y[idx:idx+batch_size])  # compute the loss
-        new_loss.backward()  # perform backpropagation
-        optimizer.step()  # update the model parameters
-        loss = loss + new_loss.item()  # accumulate the loss
-    print(f"Epoch {epoch} loss: {loss:.3f}")  # print the loss for the epoch
+with torch.no_grad():  # speeds stuff up bc it just does the forward passes without computing the gradients
+    testOutputs = autoencoder(testX)
+    testLoss = error(testOutputs, testX)
+    print(f"Test Loss: {testLoss:.4f}")
 
-    test_classes = my_network(test_X)  # perform a forward pass on the test data
-    test_classes = test_classes.argmax(axis=1)  # get the predicted classes
-    print(f"Test Accuracy: {accuracy_score(test_classes, test_y.argmax(axis=1))}")  # compute and print the accuracy
+
 
 # <<< FIGURE CREATION >>>
-one_image = np.reshape(images[2, :], (150, 225, 3))  # reshape one image for display
-plt.imshow(one_image, cmap='grey')  # display the image
-fig, axs = plt.subplots(nrows=5, ncols=5, figsize=(7.5, 5))  # create a 5x5 grid of subplots
+fig, axs = plt.subplots(2, 5, figsize=(15, 6))
 
-for i in range(5):  # iterate over the rows
-    for j in range(5):  # iterate over the columns
-        axs[i, j].imshow(np.reshape(images[(i*10)+j, :], (25, 50)), cmap='grey')  # display each image in the grid
-        axs[i, j].set_xticks([])  # remove x-axis ticks
-        axs[i, j].set_yticks([])  # remove y-axis ticks
+for i in range(5):
+    axs[0, i].imshow(np.reshape(testX[i].numpy(), (150, 225, 3)), cmap='gray')
+    axs[0, i].set_title("Original")
+    axs[0, i].axis('off')
+
+    # Reconstructed images
+    axs[1, i].imshow(np.reshape(testOutputs[i].numpy(), (150, 225, 3)), cmap='gray')
+    axs[1, i].set_title("Reconstructed")
+    axs[1, i].axis('off')
+
+plt.show()  # show the grid of images
