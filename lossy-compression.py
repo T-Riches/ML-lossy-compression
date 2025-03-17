@@ -1,4 +1,6 @@
 # <<< DEPENDENCIES >>>
+
+#  SSIM strictural similarity 
 import matplotlib.pyplot as plt  # for plotting images
 import numpy as np  # for numerical operations
 from sklearn.model_selection import train_test_split  # for splitting the dataset
@@ -53,7 +55,7 @@ class Autoencoder(nn.Module):
         self.decoder = nn.Sequential(
             # Upsample from (64,19,29) -> (64,38,58)
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1),
             nn.ReLU(True),
             # Upsample from (32,38,58) -> (32,76,116)
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
