@@ -8,100 +8,184 @@ import torch.optim as optim  # for optimization algorithms
 
 # <<< DATA LOADING & FEATURE ENGINEERING >>>
 images = np.load("subset_1.npy")  # load the features from a numpy file
-images2 = np.load("subset_2.npy")  # load the features from a numpy file
-images3 = np.load("subset_3.npy")  # load the features from a numpy file
+images2 = np.load("subset_2.npy")
+images3 = np.load("subset_3.npy")
 
-images = images / 255  # normalize the pixel values to be between 0 and 1
-images2 = images2 / 255
-images3 = images3 / 255
+# Print shapes for debugging
+print("subset_1.npy shape:", images.shape)
+print("subset_2.npy shape:", images2.shape)
+print("subset_3.npy shape:", images3.shape)
+
+# Normalize if images are in 0-255 range
+images = images / 255.0  
+images2 = images2 / 255.0
+images3 = images3 / 255.0
+
+# Check and reshape if images are flattened
+def process_images(np_images):
+    if np_images.ndim == 2:  # flattened, shape (n, 101250)
+        np_images = np_images.reshape(-1, 150, 225, 3)
+        print("Reshaped flattened images to:", np_images.shape)
+    elif np_images.ndim == 4 and np_images.shape[-1] == 3:
+        print("Images are in HxWxC format:", np_images.shape)
+    else:
+        print("Unexpected image shape:", np_images.shape)
+    return np_images
+
+images = process_images(images)
+images2 = process_images(images2)
+images3 = process_images(images3)
 
 # <<< MODEL DEVELOPMENT >>>
-class ConvAutoencoder(nn.Module):
+class Autoencoder(nn.Module):
     def __init__(self):
-        super(ConvAutoencoder, self).__init__()
+        super(Autoencoder, self).__init__()
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),  # (batch_size, 16, 75, 113)
+            nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1),  # (batch, 16, 75, 113)
             nn.ReLU(True),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # (batch_size, 32, 38, 57)
+            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # (batch, 32, 38, 57)
             nn.ReLU(True),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # (batch_size, 64, 19, 29)
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # (batch, 64, 19, 29)
             nn.ReLU(True)
         )
         # Decoder
-# Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=(0, 1)),  # (batch_size, 32, 38, 57)
+            # Upsample from (64,19,29) -> (64,38,58)
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=(1, 1)),  # (batch_size, 16, 75, 113)
+            # Upsample from (32,38,58) -> (32,76,116)
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(16, 3, kernel_size=3, stride=2, padding=1, output_padding=(1, 1)),  # Fix output size
-            nn.Sigmoid()  
+            # Upsample from (16,76,116) -> (16,152,232)
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(16, 3, kernel_size=3, stride=1, padding=1),
+            nn.Sigmoid()  # Ensures output values in [0,1]
         )
-
-
 
     def forward(self, x):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
 
-def run_all(images):
-    # assuming all images in subset_1.npy belong to class 0
-    labels = np.zeros((images.shape[0], 1))  # create an array of zeros with the same number of rows as images
+def run_all(np_images):
+    # Split the data into training and testing sets
+    labels = np.zeros((np_images.shape[0], 1))  # dummy labels
+    trainX, testX, _, _ = train_test_split(np_images, labels, test_size=0.30)
 
-    # split the data into training and testing sets
-    trainX, testX, trainy, testy = train_test_split(images, labels, test_size=0.30)
+    # Convert from HxWxC to CxHxW
+    trainX = torch.from_numpy(trainX).to(torch.float).permute(0, 3, 1, 2)
+    testX = torch.from_numpy(testX).to(torch.float).permute(0, 3, 1, 2)
 
-    # convert the data to PyTorch tensors and reshape for convolutional layers
-    trainX = torch.from_numpy(trainX).to(torch.float).view(-1, 3, 150, 225)  # Reshape input data
-    testX = torch.from_numpy(testX).to(torch.float).view(-1, 3, 150, 225)  # Reshape input data
-    trainy = torch.from_numpy(trainy).to(torch.float)
-    testy = torch.from_numpy(testy).to(torch.float)
-
-    autoencoder = ConvAutoencoder()  # instance of autoencoder
-
+    autoencoder = Autoencoder()  # instantiate autoencoder
     error = nn.MSELoss()  # loss function
-    optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # Adam optimizer
+    optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # optimizer
 
-    numberEpochs = 20  # number of times entire dataset is passed through the NN
-    batchSize = 50  # batch size is the number of training samples that are fed to the neural network at once.
+    numberEpochs =20  # number of epochs
+    batchSize = 50     # batch size
 
+    # Training loop
     for epoch in range(numberEpochs):
-        loss = 0.0
+        epoch_loss = 0.0
         for num in range(0, trainX.shape[0], batchSize):
-            inputs = trainX[num:num+batchSize]  # selects batch of data from trainX at num and ending at batch size
-            optimiser.zero_grad()  # reset the gradients
-            outputs = autoencoder(inputs)  # perform a forward pass
+            inputs = trainX[num:num+batchSize]
+            optimiser.zero_grad()
+            outputs = autoencoder(inputs)
             outputs = torch.nn.functional.interpolate(outputs, size=(150, 225), mode='bilinear', align_corners=False)
-            trainLoss = error(outputs, inputs)  # compute the loss
-            trainLoss.backward()  # perform backpropagation
-            optimiser.step()  # update the model parameters
-            loss += trainLoss.item()  # accumulate the loss
-        print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {loss:.4f}")  # reminder for python: f"My name is {variable} and i am {variable2} years old"
+            trainLoss = error(outputs, inputs)
+            trainLoss.backward()
+            optimiser.step()
+            epoch_loss += trainLoss.item()
+        print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {epoch_loss:.4f}")
 
-    # <<< MODEL EVALUATION >>>
-    with torch.no_grad():  # speeds stuff up bc it just does the forward passes without computing the gradients
+    # MODEL EVALUATION
+    with torch.no_grad():
         testOutputs = autoencoder(testX)
-        testOutputs = torch.nn.functional.interpolate(testOutputs, size=(150, 225), mode='bilinear', align_corners=False)  # Resize output
-        testLoss = error(testOutputs, testX)  # Compute loss
+        testOutputs = torch.nn.functional.interpolate(testOutputs, size=(150, 225), mode='bilinear', align_corners=False)
+        testLoss = error(testOutputs, testX)
         print(f"Test Loss: {testLoss:.4f}")
 
-    # <<< FIGURE CREATION >>>
-    fig, axs = plt.subplots(2, 5, figsize=(15, 6))
+        
+    # calculate compression ratio
+    original_size = np.prod(trainX.shape[1:])  # size of the original data
+    encoded_size = np.prod(autoencoder.encoder(trainX).shape[1:])  # size of the encoded data
+    compression_ratio = original_size / encoded_size
+    print(f"Compression Ratio: {compression_ratio:.4f}")
 
+    # FIGURE CREATION: Display images
+    fig, axs = plt.subplots(2, 5, figsize=(15, 6))
     for i in range(5):
-        axs[0, i].imshow(np.transpose(testX[i].numpy(), (1, 2, 0)), cmap='gray')  # Correctly display the images
+        # Original image (convert from CxHxW to HxWxC)
+        original_img = np.transpose(testX[i].numpy(), (1, 2, 0))
+        axs[0, i].imshow(original_img)
         axs[0, i].set_title("Original")
         axs[0, i].axis('off')
 
-        # Reconstructed images
-        axs[1, i].imshow(np.transpose(testOutputs[i].numpy(), (1, 2, 0)), cmap='gray')  # Correctly display the images
+        # Reconstructed image
+        reconstructed_img = np.transpose(testOutputs[i].numpy(), (1, 2, 0))
+        axs[1, i].imshow(reconstructed_img)
         axs[1, i].set_title("Reconstructed")
         axs[1, i].axis('off')
+    plt.show()
 
-    plt.show()  # show the grid of images
-
+# Run on each subset
 run_all(images)
 run_all(images2)
 run_all(images3)
+
+
+# trainX, testX, _, _ = train_test_split(np_images, labels, test_size=0.30)
+
+# # Convert from HxWxC to CxHxW
+# trainX = torch.from_numpy(trainX).to(torch.float).permute(0, 3, 1, 2)
+# testX = torch.from_numpy(testX).to(torch.float).permute(0, 3, 1, 2)
+
+# autoencoder = Autoencoder()  # instantiate autoencoder
+# error = nn.MSELoss()  # loss function
+# optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # optimizer
+
+# numberEpochs =20  # number of epochs
+# batchSize = 50     # batch size
+
+# autoencoder = Autoencoder
+
+# # HERERERERER
+# numberEpochs = 20  # number of epochs
+# batchSize = 50     # batch size
+
+#     # Training loop
+# for epoch in range(numberEpochs):
+#     epoch_loss = 0.0
+#     for num in range(0, trainX.shape[0], batchSize):
+#         inputs = trainX[num:num+batchSize]
+#         optimiser.zero_grad()
+#         outputs = autoencoder(inputs)
+#         trainLoss = error(outputs, inputs)
+#         trainLoss.backward()
+#         optimiser.step()
+#         epoch_loss += trainLoss.item()
+#     print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {epoch_loss:.4f}")
+
+# # MODEL EVALUATION
+# with torch.no_grad():
+#     testOutputs = autoencoder(testX)
+#     testLoss = error(testOutputs, testX)
+#     print(f"Test Loss: {testLoss:.4f}")
+
+# # FIGURE CREATION: Display images
+# fig, axs = plt.subplots(2, 5, figsize=(15, 6))
+# for i in range(5):
+#     # Original image (convert from CxHxW to HxWxC)
+#     original_img = np.transpose(testX[i].numpy(), (1, 2, 0))
+#     axs[0, i].imshow(original_img)
+#     axs[0, i].set_title("Original")
+#     axs[0, i].axis('off')
+
+#     # Reconstructed image
+#     reconstructed_img = np.transpose(testOutputs[i].numpy(), (1, 2, 0))
+#     axs[1, i].imshow(reconstructed_img)
+#     axs[1, i].set_title("Reconstructed")
+#     axs[1, i].axis('off')
+# plt.show()
