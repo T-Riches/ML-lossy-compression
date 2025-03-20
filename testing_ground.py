@@ -5,10 +5,9 @@ from sklearn.model_selection import train_test_split  # for splitting the datase
 import torch  # for working with PyTorch
 import torch.nn as nn  # for building neural networks
 import torch.optim as optim  # for optimization algorithms
-from skimage.metrics import structural_similarity as ssim  # for SSIM calculation
 
 # <<< DATA LOADING & FEATURE ENGINEERING >>>
-images = np.load("subset_1.npy")  # loads the features from a numpy file
+images = np.load("subset_1.npy")  # load the features from a numpy file
 images2 = np.load("subset_2.npy")
 images3 = np.load("subset_3.npy")
 
@@ -18,13 +17,11 @@ print("subset_2.npy shape:", images2.shape)
 print("subset_3.npy shape:", images3.shape)
 
 # Normalize if images are in 0-255 range
-images = images / 255.0
+images = images / 255.0  
 images2 = images2 / 255.0
 images3 = images3 / 255.0
 
-# Concatenate the datasets
-
-# checks and reshapes if images are flattened - i encountered many shape-related images so this helped my process greatly
+# Check and reshape if images are flattened
 def process_images(np_images):
     if np_images.ndim == 2:  # flattened, shape (n, 101250)
         np_images = np_images.reshape(-1, 150, 225, 3)
@@ -35,9 +32,9 @@ def process_images(np_images):
         print("Unexpected image shape:", np_images.shape)
     return np_images
 
-all_images = np.concatenate((images, images2, images3), axis=0)
-print("All images shape:", all_images.shape)
-all_images = process_images(all_images)
+images = process_images(images)
+images2 = process_images(images2)
+images3 = process_images(images3)
 
 # <<< MODEL DEVELOPMENT >>>
 class Autoencoder(nn.Module):
@@ -69,6 +66,7 @@ class Autoencoder(nn.Module):
             # Upsample from (16,76,116) -> (16,152,232)
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(16, 3, kernel_size=3, stride=1, padding=1),
+
             nn.Sigmoid()  # Ensures output values in [0,1]
         )
 
@@ -77,7 +75,7 @@ class Autoencoder(nn.Module):
         x = self.decoder(x)
         return x
 
-def run_all(np_images, learningRate=0.001, showEpochs=True, showImages=True):
+def run_all(np_images):
     # Split the data into training and testing sets
     labels = np.zeros((np_images.shape[0], 1))  # dummy labels
     trainX, testX, _, _ = train_test_split(np_images, labels, test_size=0.30)
@@ -88,10 +86,10 @@ def run_all(np_images, learningRate=0.001, showEpochs=True, showImages=True):
 
     autoencoder = Autoencoder()  # instantiate autoencoder
     error = nn.MSELoss()  # loss function
-    optimiser = optim.Adam(autoencoder.parameters(), lr=learningRate)  # optimizer
+    optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # optimizer
 
-    numberEpochs = 100  # number of epochs
-    batchSize = 50  # batch size
+    numberEpochs =20  # number of epochs
+    batchSize = 50     # batch size
 
     # Training loop
     for epoch in range(numberEpochs):
@@ -105,58 +103,94 @@ def run_all(np_images, learningRate=0.001, showEpochs=True, showImages=True):
             trainLoss.backward()
             optimiser.step()
             epoch_loss += trainLoss.item()
-        if showEpochs:
-            print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {epoch_loss:.4f}")
+        print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {epoch_loss:.4f}")
 
-    # Model evaluation
+    # MODEL EVALUATION
     with torch.no_grad():
         testOutputs = autoencoder(testX)
         testOutputs = torch.nn.functional.interpolate(testOutputs, size=(150, 225), mode='bilinear', align_corners=False)
         testLoss = error(testOutputs, testX)
         print(f"Test Loss: {testLoss:.4f}")
 
-    # Calculate compression ratio
+        
+    # calculate compression ratio
     original_size = np.prod(trainX.shape[1:])  # size of the original data
     encoded_size = np.prod(autoencoder.encoder(trainX).shape[1:])  # size of the encoded data
     compression_ratio = original_size / encoded_size
     print(f"Compression Ratio: {compression_ratio:.4f}")
 
-    # Calculate SSIM for each image
-    ssim_values = []
-    for i in range(testX.shape[0]):
-        original_img = testX[i].permute(1, 2, 0).numpy()  # Convert from CxHxW to HxWxC
-        reconstructed_img = testOutputs[i].permute(1, 2, 0).numpy()  # Convert from CxHxW to HxWxC
-        ssim_value = ssim(original_img, reconstructed_img, data_range=1.0, channel_axis=2)
-        ssim_values.append(ssim_value)
-    avg_ssim = np.mean(ssim_values)
-    print(f"Average SSIM: {avg_ssim:.4f}")
+    # FIGURE CREATION: Display images
+    fig, axs = plt.subplots(2, 5, figsize=(15, 6))
+    for i in range(5):
+        # Original image (convert from CxHxW to HxWxC)
+        original_img = np.transpose(testX[i].numpy(), (1, 2, 0))
+        axs[0, i].imshow(original_img)
+        axs[0, i].set_title("Original")
+        axs[0, i].axis('off')
 
-    # Figure creation: display images
-    if showImages:
-        fig, axs = plt.subplots(2, 5, figsize=(15, 6))
-        for i in range(5):
-            # Original image (convert from CxHxW to HxWxC)
-            original_img = np.transpose(testX[i].numpy(), (1, 2, 0))
-            axs[0, i].imshow(original_img)
-            axs[0, i].set_title("Original")
-            axs[0, i].axis('off')
+        # Reconstructed image
+        reconstructed_img = np.transpose(testOutputs[i].numpy(), (1, 2, 0))
+        axs[1, i].imshow(reconstructed_img)
+        axs[1, i].set_title("Reconstructed")
+        axs[1, i].axis('off')
+    plt.show()
 
-            # Reconstructed image
-            reconstructed_img = np.transpose(testOutputs[i].numpy(), (1, 2, 0))
-            axs[1, i].imshow(reconstructed_img)
-            axs[1, i].set_title("Reconstructed")
-            axs[1, i].axis('off')
-        plt.show()
+# Run on each subset
+run_all(images)
+run_all(images2)
+run_all(images3)
 
-# def learning_rate_test():
-#     learningRates = np.arange(0.0001, 0.0021, 0.0001)  # Generate learning rates from 0.0001 to 0.002
 
-#     for learningRate in learningRates:
-#         print(f"Learning rate is {learningRate}")
-#         run_all(all_images, learningRate, showEpochs=False, showImages=False)
+# trainX, testX, _, _ = train_test_split(np_images, labels, test_size=0.30)
 
-# # Uncomment the following line to run the learning rate test
-# learning_rate_test()
+# # Convert from HxWxC to CxHxW
+# trainX = torch.from_numpy(trainX).to(torch.float).permute(0, 3, 1, 2)
+# testX = torch.from_numpy(testX).to(torch.float).permute(0, 3, 1, 2)
 
-# Run on the concatenated dataset with a specific learning rate
-run_all(all_images, 0.001)
+# autoencoder = Autoencoder()  # instantiate autoencoder
+# error = nn.MSELoss()  # loss function
+# optimiser = optim.Adam(autoencoder.parameters(), lr=0.001)  # optimizer
+
+# numberEpochs =20  # number of epochs
+# batchSize = 50     # batch size
+
+# autoencoder = Autoencoder
+
+# # HERERERERER
+# numberEpochs = 20  # number of epochs
+# batchSize = 50     # batch size
+
+#     # Training loop
+# for epoch in range(numberEpochs):
+#     epoch_loss = 0.0
+#     for num in range(0, trainX.shape[0], batchSize):
+#         inputs = trainX[num:num+batchSize]
+#         optimiser.zero_grad()
+#         outputs = autoencoder(inputs)
+#         trainLoss = error(outputs, inputs)
+#         trainLoss.backward()
+#         optimiser.step()
+#         epoch_loss += trainLoss.item()
+#     print(f"Epoch {epoch+1}/{numberEpochs}, Loss: {epoch_loss:.4f}")
+
+# # MODEL EVALUATION
+# with torch.no_grad():
+#     testOutputs = autoencoder(testX)
+#     testLoss = error(testOutputs, testX)
+#     print(f"Test Loss: {testLoss:.4f}")
+
+# # FIGURE CREATION: Display images
+# fig, axs = plt.subplots(2, 5, figsize=(15, 6))
+# for i in range(5):
+#     # Original image (convert from CxHxW to HxWxC)
+#     original_img = np.transpose(testX[i].numpy(), (1, 2, 0))
+#     axs[0, i].imshow(original_img)
+#     axs[0, i].set_title("Original")
+#     axs[0, i].axis('off')
+
+#     # Reconstructed image
+#     reconstructed_img = np.transpose(testOutputs[i].numpy(), (1, 2, 0))
+#     axs[1, i].imshow(reconstructed_img)
+#     axs[1, i].set_title("Reconstructed")
+#     axs[1, i].axis('off')
+# plt.show()
