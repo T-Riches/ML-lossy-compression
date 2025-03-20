@@ -40,6 +40,9 @@ def process_images(np_images):
 
 all_images = process_images(all_images)
 
+# Use a smaller subset of the dataset for Bayesian optimization
+subset_images = all_images[:100]  # Use only the first 100 images
+
 # <<< MODEL DEVELOPMENT >>>
 class Autoencoder(nn.Module):
     def __init__(self):
@@ -80,13 +83,13 @@ class Autoencoder(nn.Module):
 
 def objective(trial):
     # Hyperparameters to tune
-    learningRate = trial.suggest_float('learningRate', 1e-5, 1e-2, log=True)
+    learningRate = trial.suggest_float('learningRate', 1e-4, 1e-2, log=True)
     numberEpochs = trial.suggest_int('numberEpochs', 75, 150)
     batchSize = trial.suggest_categorical('batchSize', [16, 32, 64, 128])
 
     # Split the data into training and testing sets
-    labels = np.zeros((all_images.shape[0], 1))  # dummy labels
-    trainX, testX, _, _ = train_test_split(all_images, labels, test_size=0.30)
+    labels = np.zeros((subset_images.shape[0], 1))  # dummy labels
+    trainX, testX, _, _ = train_test_split(subset_images, labels, test_size=0.30)
 
     # Convert from HxWxC to CxHxW
     trainX = torch.from_numpy(trainX).to(torch.float).permute(0, 3, 1, 2)
@@ -131,8 +134,8 @@ def run_all(np_images, learningRate, showEpochs=True, showImages=True):
     error = nn.MSELoss()  # loss function
     optimiser = optim.Adam(autoencoder.parameters(), lr=learningRate)  # optimizer
 
-    numberEpochs = 20  # number of epochs
-    batchSize = 50  # batch size
+    numberEpochs = 100  # number of epochs
+    batchSize = 64  # batch size
 
     # Training loop
     for epoch in range(numberEpochs):
@@ -190,13 +193,12 @@ def run_all(np_images, learningRate, showEpochs=True, showImages=True):
         plt.show()
 
 # Run Bayesian optimization
-study = optuna.create_study(direction='minimize')
-study.optimize(objective, n_trials=10)
+# study = optuna.create_study(direction='minimize')
+# study.optimize(objective, n_trials=50)
 
-# Print best hyperparameters
-print(f"Best hyperparameters: {study.best_params}")
+# # Print best hyperparameters
+# print(f"Best hyperparameters: {study.best_params}")
 
 # Run the model with the best hyperparameters
-best_params = study.best_params
-print(best_params)
-# run_all(all_images, learningRate=best_params['learningRate'], showEpochs=True, showImages=True)
+#best_params = study.best_params
+run_all(all_images, learningRate=0.0001, showEpochs=True, showImages=True)
