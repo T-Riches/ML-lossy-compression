@@ -6,7 +6,6 @@ import torch  # for working with PyTorch
 import torch.nn as nn  # for building neural networks
 import torch.optim as optim  # for optimization algorithms
 from skimage.metrics import structural_similarity as ssim  # for SSIM calculation
-import optuna  # for Bayesian optimization
 
 # <<< DATA LOADING & FEATURE ENGINEERING >>>
 images = np.load("subset_1.npy")  # loads the features from a numpy file
@@ -24,8 +23,6 @@ images2 = images2 / 255.0
 images3 = images3 / 255.0
 
 # Concatenate the datasets
-all_images = np.concatenate((images, images2, images3), axis=0)
-print("All images shape:", all_images.shape)
 
 # checks and reshapes if images are flattened - i encountered many shape-related images so this helped my process greatly
 def process_images(np_images):
@@ -38,10 +35,9 @@ def process_images(np_images):
         print("Unexpected image shape:", np_images.shape)
     return np_images
 
+all_images = np.concatenate((images, images2, images3), axis=0)
+print("All images shape:", all_images.shape)
 all_images = process_images(all_images)
-
-# Use a smaller subset of the dataset for Bayesian optimization
-subset_images = all_images[:100]  # Use only the first 100 images
 
 # <<< MODEL DEVELOPMENT >>>
 class Autoencoder(nn.Module):
@@ -81,47 +77,7 @@ class Autoencoder(nn.Module):
         x = self.decoder(x)
         return x
 
-def objective(trial):
-    # Hyperparameters to tune
-    learningRate = trial.suggest_float('learningRate', 1e-4, 1e-2, log=True)
-    numberEpochs = trial.suggest_int('numberEpochs', 75, 150)
-    batchSize = trial.suggest_categorical('batchSize', [16, 32, 64, 128])
-
-    # Split the data into training and testing sets
-    labels = np.zeros((subset_images.shape[0], 1))  # dummy labels
-    trainX, testX, _, _ = train_test_split(subset_images, labels, test_size=0.30)
-
-    # Convert from HxWxC to CxHxW
-    trainX = torch.from_numpy(trainX).to(torch.float).permute(0, 3, 1, 2)
-    testX = torch.from_numpy(testX).to(torch.float).permute(0, 3, 1, 2)
-
-    autoencoder = Autoencoder()  # instantiate autoencoder
-    error = nn.MSELoss()  # loss function
-    optimiser = optim.Adam(autoencoder.parameters(), lr=learningRate)  # optimizer
-
-    # Training loop
-    for epoch in range(numberEpochs):
-        epoch_loss = 0.0
-        for num in range(0, trainX.shape[0], batchSize):
-            inputs = trainX[num:num+batchSize]
-            optimiser.zero_grad()
-            outputs = autoencoder(inputs)
-            outputs = torch.nn.functional.interpolate(outputs, size=(150, 225), mode='bilinear', align_corners=False)
-            trainLoss = error(outputs, inputs)
-            trainLoss.backward()
-            optimiser.step()
-            epoch_loss += trainLoss.item()
-
-    # Model evaluation
-    with torch.no_grad():
-        testOutputs = autoencoder(testX)
-        testOutputs = torch.nn.functional.interpolate(testOutputs, size=(150, 225), mode='bilinear', align_corners=False)
-        testLoss = error(testOutputs, testX)
-
-    return testLoss.item()
-
-# Define the run_all function
-def run_all(np_images, learningRate, showEpochs=True, showImages=True):
+def run_all(np_images, learningRate=0.001, showEpochs=True, showImages=True):
     # Split the data into training and testing sets
     labels = np.zeros((np_images.shape[0], 1))  # dummy labels
     trainX, testX, _, _ = train_test_split(np_images, labels, test_size=0.30)
@@ -135,7 +91,7 @@ def run_all(np_images, learningRate, showEpochs=True, showImages=True):
     optimiser = optim.Adam(autoencoder.parameters(), lr=learningRate)  # optimizer
 
     numberEpochs = 100  # number of epochs
-    batchSize = 64  # batch size
+    batchSize = 50  # batch size
 
     # Training loop
     for epoch in range(numberEpochs):
@@ -192,13 +148,5 @@ def run_all(np_images, learningRate, showEpochs=True, showImages=True):
             axs[1, i].axis('off')
         plt.show()
 
-# Run Bayesian optimization
-# study = optuna.create_study(direction='minimize')
-# study.optimize(objective, n_trials=50)
 
-# # Print best hyperparameters
-# print(f"Best hyperparameters: {study.best_params}")
-
-# Run the model with the best hyperparameters
-#best_params = study.best_params
-run_all(all_images, learningRate=0.0001, showEpochs=True, showImages=True)
+run_all(all_images, 0.001)
